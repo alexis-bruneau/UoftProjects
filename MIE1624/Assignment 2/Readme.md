@@ -1,7 +1,7 @@
 MIE1624 Assignment 2
 ====================
 
-The goal of this homework is to implement ordinal logistic regression to predict the yearly compensation of each participant. The dataset used is from the  [2022 Kaggle ML & DS Survey](": https://www.kaggle.com/competitions/kaggle-survey2022").
+The goal of this homework is to implement ordinal logistic regression to predict the yearly compensation of each participant. The dataset used is from the [2022 Kaggle ML & DS Survey](https://www.kaggle.com/competitions/kaggle-survey2022).
 
 The code includes the following:
 
