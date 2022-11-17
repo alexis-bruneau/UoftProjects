@@ -44,15 +44,3 @@ The 4 functions are located at the end of the start_code_feature file.
 Make sure you are in the correct folder directory and the folder has access to the library mentionned.
 After that, all you need to do is run the python file. It should display the point cloud registration before icp and after for the 3 dataset,it will show the graph the euclidean mean and translation graph
 the ground truth, estimated pose and the error. The code might take a few minutes before displaying any outputs. 
-
-
-
-
-The code for the Decision Tree and K-Nearest Neighbour is available as a
-jupyter notebook file
-
-Handwritten Question / Analysis
--------------------------------
-
-The questions can be found in Homework1 - Questions and the answers in
-Homework1 - Answers
