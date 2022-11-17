@@ -1,4 +1,4 @@
-MIE1624 Assignment 2
+MIE1624 Assignment 1
 ====================
 
 The goal of this homework is to explore the [survey data]("https://www.kaggle.com/c/kaggle-survey-2021/data") to understand the nature of women's representation in Data Science
