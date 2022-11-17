@@ -7,7 +7,7 @@ The first part consists of matching features between stereo camera pairs, filter
 
 * Feature Detection
 * Feature Matching
-* Outlier REjection
+* Outlier Rejection
 
 The second Part consists of 3D Point Cloud Registration. The goal is to take a rigid transform from one point cloud to another such that they align together. The code consists of the three following steps:
 
