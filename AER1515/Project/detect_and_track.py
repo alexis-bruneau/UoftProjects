@@ -5,6 +5,9 @@ from pathlib import Path
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
+import operator
+import math
+import numpy as np
 from numpy import random
 
 from models.experimental import attempt_load
@@ -67,7 +70,15 @@ def detect(save_img=False):
     old_img_b = 1
 
     t0 = time.time()
+    z = 0
+    global_people_id = {} # Store location and id of object
     for path, img, im0s, vid_cap in dataset:
+        ### REMOVE AFTER TO CUT VIDEO SHORT 
+        #if z == 60:
+        #    break
+        z += 1
+        ### REMOVE 
+
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -97,7 +108,7 @@ def detect(save_img=False):
             pred = apply_classifier(pred, modelc, img, im0s)
 
         # Process detections
-        for i, det in enumerate(pred):  # detections per image
+        for i, det in enumerate(pred):  # detections per image            
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
             else:
@@ -133,12 +144,15 @@ def detect(save_img=False):
                 #     circle = cv2.circle(im0,center_point,5,(0,255,0),2)
                 #     text_coord = cv2.putText(in0,str(center_point),center_point,cv2.FONT_HERSHEY_PLAIN,2,(0,0,255))
 
-                # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class                    s
+                # Print results    
+                for c in det[:, -1].unique():                    
+                    n = (det[:, -1] == c).sum()  # detections per class                    
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
+                people_tracker = {}
+                min_distance = float('inf')
+                person_id = 0
                 for *xyxy, conf, cls in reversed(det):
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
@@ -148,10 +162,53 @@ def detect(save_img=False):
 
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
+                        cx, cy =  plot_one_box(xyxy, im0, start_point[0], label=label, color=colors[int(cls)], line_thickness=1)
+                        people_tracker[('person' + str(person_id))] = (cx,cy)
+                        person_id += 1
+                
+                if len(global_people_id) == 0:       
+                    global_people_id = people_tracker
+               
+               
+                k2_match = [] #Track people we considered closest points
+                for k,v in global_people_id.items():                         
+                    for k2,v2 in people_tracker.items():
+                        if k2 in k2_match:
+                            continue                        
+                        # Calculate the distance between each tracked person and find closest match   
+                        distance = tuple(map(operator.sub, v, v2)) 
+                        distance = math.sqrt(np.square(distance).sum()) # square x and y, sum them, and then sqrt (euclidean distance)
+                        if distance < min_distance:
+                            min_distance = distance 
+                            min_distance_xy = v2
+                            smallest_k2 = k2
+                    # Replace value in global dict
+                    k2_match.append(smallest_k2)
+                    global_people_id[k] = min_distance_xy
+                    min_distance = float('inf') # Reset minimum distance
+                
+              
+                if len(people_tracker) < len(global_people_id):
+                    people_remove = [] # People that are not in picture anymore
+                    for people in global_people_id:
+                        if people not in people_tracker:
+                            people_remove.append(people)
+                            
+                    for item in people_remove:
+                        removed_id = global_people_id.pop(item)  
+                    print('Local Tracker')
+                    print(people_tracker)
+                    print("Gloabl Tracker")
+                    print(global_people_id)
+                    break
+                
+                
+                print(global_people_id)
 
+              
+                
             # Print time (inference + NMS)
-            print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+            #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
             if view_img:
