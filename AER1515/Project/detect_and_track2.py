@@ -73,13 +73,17 @@ def detect(save_img=False):
     z = 0
     global_people_id = {} # Store location and id of object
     global_people_id_old = {}
+    counter = 0
+    #comparisson_list = [{}]
+    dict_test = {}   
+    region = None
     for path, img, im0s, vid_cap in dataset:
         ### REMOVE AFTER TO CUT VIDEO SHORT 
-        if z == 50:
-            break
+        # if z == 1000:
+        #     break
         z += 1
         ### REMOVE 
-
+       
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -141,20 +145,34 @@ def detect(save_img=False):
                 # Created our desired region of interst for our vide 
                 # !!! Red dot in Plots file !!!
 
-                p1 = (650,400)
-                p2 = (450,750)
-                p3 = (1150,400)
-                p4 = (1250,750)
+                #  Create region 1
+                p1 = (425,600)
+                p2 = (225,950)
+                p3 = (1400,600)
+                p4 = (1500,950)
                 point_list = [p1,p2,p3,p4]
-
                 cv2.line(im0, p1,p2, color, thickness)
                 cv2.line(im0, p1,p3, color, thickness)
                 cv2.line(im0, p3, p4, color, thickness)
                 cv2.line(im0, p4,p2 , color, thickness)
+
+
+                # Create region 2
+                color_2 = (255,0,0)
+                p1_2 = (425,600)
+                p2_2 = (1400,600)
+                p3_2 = (1350,400)
+                p4_2 = (525,400)
+                point_list_2 = [p1_2,p2_2,p3_2,p4_2]
+                cv2.line(im0, p1_2,p2_2, color_2, thickness)
+                cv2.line(im0, p2_2,p3_2, color_2, thickness)
+                cv2.line(im0, p3_2, p4_2, color_2, thickness)
+                cv2.line(im0, p4_2,p1_2 , color_2, thickness)
+                
               
 
                 # Print results    
-                for c in det[:, -1].unique():                    
+                for c in det[:, -1].unique():                  
                     n = (det[:, -1] == c).sum()  # detections per class                    
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
@@ -173,28 +191,27 @@ def detect(save_img=False):
 
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
-                        cx, cy, inbound =  plot_one_box(xyxy, im0, point_list, label=label, color=colors[int(cls)], line_thickness=1) 
+                        cx, cy, inbound, region =  plot_one_box(xyxy, im0, point_list,point_list_2, label=label, color=colors[int(cls)], line_thickness=1) 
                         if inbound == True:
-                            people_tracker[('person' + str(person_id))] = (cx,cy)
+                            people_tracker[('person' + str(person_id))] = [(cx,cy),region]                            
                             person_id += 1
+                            
                             
                 
                 if len(global_people_id) == 0:       
-                    global_people_id = people_tracker
-               
-               ## Testing to see if bounding region work
-                # if len(global_people_id) == 5:
-                #     print(f"There's only 2 people in the area")
-                #     exit()
-               
+                    global_people_id = people_tracker   
+
+                
                 k2_match = [] #Track people we considered closest points
                 for k,v in global_people_id.items():                         
                     for k2,v2 in people_tracker.items():
                         if k2 in k2_match:
-                            continue                        
+                            continue                       
                         # Calculate the distance between each tracked person and find closest match   
-                        distance = tuple(map(operator.sub, v, v2)) 
-                        distance = math.sqrt(np.square(distance).sum()) # square x and y, sum them, and then sqrt (euclidean distance)
+                        distance_x = abs((v[0][0] - v2[0][0])**2)
+                        distance_y = abs((v[0][1]-v2[0][1])**2)
+                        distance = math.sqrt(distance_x+distance_y)                  
+                    
                         if distance < min_distance:
                             min_distance = distance 
                             min_distance_xy = v2
@@ -204,12 +221,16 @@ def detect(save_img=False):
                             max_distance_xy = v2
                             biggest_k2 = k2
 
-                    # Replace value in global dict
-                    k2_match.append(smallest_k2)
-                    global_people_id[k] = min_distance_xy
-                    min_distance = float('inf') # Reset minimum distance
+                    
+                              
+                    k2_match.append(smallest_k2)                     
+                    global_people_id[k] = min_distance_xy                    
+                    min_distance = float('inf') # Reset minimum distance      
+
+               
+                dict_test = global_people_id.copy()                
                 
-              
+
                 if len(people_tracker) < len(global_people_id):
                     people_remove = [] # People that are not in picture anymore
                     for people in global_people_id:
@@ -231,11 +252,33 @@ def detect(save_img=False):
                     found_new_value = False
                     person_name = str('person'+str(len(global_people_id)))   
                     global_people_id[person_name] = new_person_distance                           
-                
-            
-                print(f"This is old global {global_people_id_old}")
-                print(f"This is new global {global_people_id}")
-                
+
+            # print(f"NEW -- {global_people_id}")
+            # print(f"OLD {global_people_id_old}")
+
+            if len(global_people_id) != 0 and len(global_people_id_old) != 0 and z > 1 and len(global_people_id) == len(global_people_id_old):   
+                for k,v in global_people_id.items():     
+                    distance_x = abs(global_people_id[k][0][0] - global_people_id_old[k][0][0])
+                    distance_y = abs(global_people_id[k][0][1] - global_people_id_old[k][0][1])
+                    total_distance = distance_x + distance_y
+
+                    if global_people_id[k][1] != global_people_id_old[k][1] and total_distance < 150:    
+                        print(global_people_id_old[k][1]) 
+                        print(global_people_id[k][1])
+                        if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1":
+                            counter += 1
+                        else:
+                            counter -= 1
+                        
+                        
+                        print("Different Regions") 
+                        print(global_people_id)
+                        print(global_people_id_old)             
+                        
+            cv2.putText(im0, str(counter), (100,200), cv2.FONT_HERSHEY_DUPLEX, 5.0, (0, 255, 255), 10)
+
+              
+         
             # Print time (inference + NMS)
             #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
@@ -265,7 +308,10 @@ def detect(save_img=False):
                     vid_writer.write(im0)
 
         
-        global_people_id_old = global_people_id
+        global_people_id_old = global_people_id.copy()
+
+ 
+       
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
