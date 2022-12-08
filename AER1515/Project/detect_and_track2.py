@@ -27,6 +27,13 @@ def detect(save_img=False):
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    
+    distance_threshold = 200
+    result_dir = 'Results/'
+    result_dir = open(result_dir+ "test" + str(distance_threshold) + ".txt", "a") 
+    result_dir.truncate(0) 
+    
+    
 
     # Initialize
     set_logging()
@@ -75,12 +82,12 @@ def detect(save_img=False):
     global_people_id_old = {}
     counter = 0
     #comparisson_list = [{}]
-    dict_test = {}   
+   
     region = None
     for path, img, im0s, vid_cap in dataset:
         ### REMOVE AFTER TO CUT VIDEO SHORT 
-        # if z == 1000:
-        #     break
+        if z == 500:
+            break
         z += 1
         ### REMOVE 
        
@@ -191,9 +198,9 @@ def detect(save_img=False):
 
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
-                        cx, cy, inbound, region =  plot_one_box(xyxy, im0, point_list,point_list_2, label=label, color=colors[int(cls)], line_thickness=1) 
+                        cx, cy, inbound, region, x_bot, y_top, width, height =  plot_one_box(xyxy, im0, point_list,point_list_2, label=label, color=colors[int(cls)], line_thickness=1) 
                         if inbound == True:
-                            people_tracker[('person' + str(person_id))] = [(cx,cy),region]                            
+                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height]                            
                             person_id += 1
                             
                             
@@ -262,7 +269,7 @@ def detect(save_img=False):
                     distance_y = abs(global_people_id[k][0][1] - global_people_id_old[k][0][1])
                     total_distance = distance_x + distance_y
 
-                    if global_people_id[k][1] != global_people_id_old[k][1] and total_distance < 150:    
+                    if global_people_id[k][1] != global_people_id_old[k][1] and total_distance < distance_threshold:    
                         print(global_people_id_old[k][1]) 
                         print(global_people_id[k][1])
                         if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1":
@@ -310,6 +317,11 @@ def detect(save_img=False):
         
         global_people_id_old = global_people_id.copy()
 
+        ## Append information 
+        # z = #frame 
+        for k,v in global_people_id.items():
+            # frame id xbottom ytop width height
+            result_dir.write(f"{z} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
  
        
 
