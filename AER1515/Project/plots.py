@@ -61,6 +61,10 @@ def plot_one_box(x, img,point_list,point_list2,color=None, label=None, line_thic
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
     cx = int((int(x[0])+int(x[2]))/2)
     cy = int((int(x[1])+int(x[3]))/2)
+    x_bot = c1[0]
+    y_top = c2[1]
+    width = abs(x[2]-x[0])
+    height = abs(x[3]-x[1])
     cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
     
     # Calculate threshold 
@@ -99,7 +103,8 @@ def plot_one_box(x, img,point_list,point_list2,color=None, label=None, line_thic
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
         cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
         
-    return cx, cy, inbound, region
+        
+    return cx, cy, inbound, region, x_bot, y_top, width, height
 
 
 def plot_one_box_PIL(box, img, color=None, label=None, line_thickness=None):
