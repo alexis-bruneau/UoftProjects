@@ -18,7 +18,7 @@ from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 
-def detect(save_img=False):
+def detect(save_img=False,Training=True):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
     save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
@@ -30,6 +30,11 @@ def detect(save_img=False):
     
     distance_threshold = 200
     result_dir = 'Results/'
+    ground_truth_dir = 'Videos/gt_PETS09-S2L1-raw.txt'
+    gt_file = open(ground_truth_dir, 'r')
+    gt_id_match = None
+    Lines_gt = gt_file.readlines()    
+    count_gt = 0
     result_dir = open(result_dir+ "test" + str(distance_threshold) + ".txt", "a") 
     result_dir.truncate(0) 
     
@@ -86,8 +91,9 @@ def detect(save_img=False):
     region = None
     for path, img, im0s, vid_cap in dataset:
         ### REMOVE AFTER TO CUT VIDEO SHORT 
-        if z == 500:
+        if z == 1:
             break
+        
         z += 1
         ### REMOVE 
        
@@ -157,12 +163,7 @@ def detect(save_img=False):
                 p2 = (225,950)
                 p3 = (1400,600)
                 p4 = (1500,950)
-                point_list = [p1,p2,p3,p4]
-                cv2.line(im0, p1,p2, color, thickness)
-                cv2.line(im0, p1,p3, color, thickness)
-                cv2.line(im0, p3, p4, color, thickness)
-                cv2.line(im0, p4,p2 , color, thickness)
-
+                point_list = [p1,p2,p3,p4]               
 
                 # Create region 2
                 color_2 = (255,0,0)
@@ -171,12 +172,18 @@ def detect(save_img=False):
                 p3_2 = (1350,400)
                 p4_2 = (525,400)
                 point_list_2 = [p1_2,p2_2,p3_2,p4_2]
-                cv2.line(im0, p1_2,p2_2, color_2, thickness)
-                cv2.line(im0, p2_2,p3_2, color_2, thickness)
-                cv2.line(im0, p3_2, p4_2, color_2, thickness)
-                cv2.line(im0, p4_2,p1_2 , color_2, thickness)
                 
-              
+                
+                if Training != True:
+                    cv2.line(im0, p1,p2, color, thickness)
+                    cv2.line(im0, p1,p3, color, thickness)
+                    cv2.line(im0, p3, p4, color, thickness)
+                    cv2.line(im0, p4,p2 , color, thickness)
+                    cv2.line(im0, p1_2,p2_2, color_2, thickness)
+                    cv2.line(im0, p2_2,p3_2, color_2, thickness)
+                    cv2.line(im0, p3_2, p4_2, color_2, thickness)
+                    cv2.line(im0, p4_2,p1_2 , color_2, thickness)
+                
 
                 # Print results    
                 for c in det[:, -1].unique():                  
@@ -199,8 +206,14 @@ def detect(save_img=False):
                     if save_img or view_img:  # Add bbox to image
                         label = f'{names[int(cls)]} {conf:.2f}'
                         cx, cy, inbound, region, x_bot, y_top, width, height =  plot_one_box(xyxy, im0, point_list,point_list_2, label=label, color=colors[int(cls)], line_thickness=1) 
-                        if inbound == True:
-                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height]                            
+
+                        if Training == True:
+                            bb_area = float(width) * float(height)
+                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height, bb_area,gt_id_match]                            
+                            person_id += 1
+                        elif inbound == True:
+                            bb_area = float(width) * float(height)
+                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height, bb_area,gt_id_match]                            
                             person_id += 1
                             
                             
@@ -270,17 +283,17 @@ def detect(save_img=False):
                     total_distance = distance_x + distance_y
 
                     if global_people_id[k][1] != global_people_id_old[k][1] and total_distance < distance_threshold:    
-                        print(global_people_id_old[k][1]) 
-                        print(global_people_id[k][1])
+                        # print(global_people_id_old[k][1]) 
+                        # print(global_people_id[k][1])
                         if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1":
                             counter += 1
                         else:
                             counter -= 1
                         
                         
-                        print("Different Regions") 
-                        print(global_people_id)
-                        print(global_people_id_old)             
+                        # print("Different Regions") 
+                        # print(global_people_id)
+                        # print(global_people_id_old)             
                         
             cv2.putText(im0, str(counter), (100,200), cv2.FONT_HERSHEY_DUPLEX, 5.0, (0, 255, 255), 10)
 
@@ -317,13 +330,109 @@ def detect(save_img=False):
         
         global_people_id_old = global_people_id.copy()
 
-        ## Append information 
-        # z = #frame 
-        for k,v in global_people_id.items():
-            # frame id xbottom ytop width height
-            result_dir.write(f"{z} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
- 
        
+        # Compare information to groundtruth 
+        max_IoU = 0 # Initalize minimum IoU
+
+        for k,v in global_people_id.items():
+            
+            
+            count_gt = 0
+            if Training == True:
+            # frame id xbottom ytop width height
+                #if gt_id_match == None:
+                    
+            
+                # Reads info for groundtruth            
+                diffent_frame = True
+                while diffent_frame == True:     
+                        
+                    line = Lines_gt[count_gt]
+                    
+                    if line.split(',')[0] == str(z):
+                        
+                        #Calculates area of groundtruth bounding box (area = width * height)                   
+                        area_gt = float(line.split(',')[4]) * float(line.split(',')[5])
+
+                        # Calculate Intersection of bounding box. 
+                        # Create coordinates x1,y1,x2,y2 of bb--> (bottom left and top right)
+                        # Reminder of values in dictionary (cx,cy),region,x_bot, y_top, width, height, bb_area,gt_id_match
+                       
+
+                        if v[4] < 0:
+                            print("NEGATIVE")
+                        bb_x1 = float(v[2]) # x_bot
+                        bb_y1 = float(v[3] - v[5]) # y top - height
+                        bb_x2 = float(v[2] + v[4]) # x_bot + width
+                        bb_y2 = float(v[3]) # y top
+
+                       
+                        # Create coordinates x3,y3,x4,y5 of bb--> (bottom left and top right)
+                        gt_x3 = float(line.split(',')[2]) # x_bot
+                        gt_y3 = float(line.split(',')[3]) - float(line.split(',')[5]) # y top - height
+                        gt_x4 = float(line.split(',')[2]) + float(line.split(',')[4]) # x_bot + width
+                        gt_y4 =  float(line.split(',')[3]) # y top
+                        
+
+                        # Create intersection rectangle
+                        top_line = min(bb_y2,gt_y4)
+                        right_line = min(bb_x2,gt_x4)
+                        left_line = max(bb_x1,gt_x3)
+                        bot_line = max(bb_y1,gt_y3)
+
+                        print(bb_x1, bb_x2, bb_y1, bb_y2)
+                        print(gt_x3, gt_x4, gt_y3, gt_y4)
+
+                        # if (left_line < right_line) and (bot_line < top_line):
+                        #     print('Yes Overlap!')
+                        # else:
+                        #     print('No')
+
+                        x5 = max(bb_x1,gt_x3) 
+                        y5 = max(bb_y1,gt_y3)
+                        x6 = min(bb_x2,gt_x4)
+                        y6 = min(bb_y2,gt_y4)
+
+                        if (x5 >= x6) and (y5 >= y6):
+                            overlap = 0                            
+                        
+                        else:
+                            int_width = x6 - x5
+                            int_height = y6 - y5                            
+                            overlap = int_width * int_height
+                            # print("TESTING")
+                            # print(int_width)
+                            # print(int_height)
+                            # print(overlap)
+                            
+
+                        # Area of Union
+                        aer_union = area_gt + v[6] - overlap # Area 1 + Area 2 - Overlap
+
+                        # Calculate IoU
+                        IoU = overlap/aer_union
+                        #print(IoU)
+                        # Update minimum IoU
+                        if IoU > max_IoU:                                
+                            max_IoU = IoU
+                            v[7] = line.split(',')[1] # Assign ID    
+                            #print("overlap")                           
+                            
+                        count_gt += 1
+
+                    
+                        
+                    
+                    else:
+                        diffent_frame = False
+
+                    
+
+
+
+                        
+            result_dir.write(f"{z} {v[7]} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+ 
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
