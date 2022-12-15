@@ -1,459 +1,528 @@
-import argparse
-import time
+# Plotting utils
+
+import glob
+import math
+import os
+import random
+from copy import copy
 from pathlib import Path
 
 import cv2
-import torch
-import torch.backends.cudnn as cudnn
-import operator
-import math
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
-from numpy import random
+import pandas as pd
+import seaborn as sns
+import torch
+import yaml
+from PIL import Image, ImageDraw, ImageFont
+from scipy.signal import butter, filtfilt
 
-from models.experimental import attempt_load
-from utils.datasets import LoadStreams, LoadImages
-from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
-    scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
-from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
+from utils.general import xywh2xyxy, xyxy2xywh
+from utils.metrics import fitness
+
+# Settings
+matplotlib.rc('font', **{'size': 11})
+matplotlib.use('Agg')  # for writing to files only
 
 
-def detect(save_img=False,Training=True
-):
-    source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
-    save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
-    webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
-        ('rtsp://', 'rtmp://', 'http://', 'https://'))
+def color_list():
+    # Return first 10 plt colors as (r,g,b) https://stackoverflow.com/questions/51350872/python-from-color-name-to-rgb
+    def hex2rgb(h):
+        return tuple(int(h[1 + i:1 + i + 2], 16) for i in (0, 2, 4))
 
-    # Directories
-    save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
-    (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    return [hex2rgb(h) for h in matplotlib.colors.TABLEAU_COLORS.values()]  # or BASE_ (8), CSS4_ (148), XKCD_ (949)
+
+
+def hist2d(x, y, n=100):
+    # 2d histogram used in labels.png and evolve.png
+    xedges, yedges = np.linspace(x.min(), x.max(), n), np.linspace(y.min(), y.max(), n)
+    hist, xedges, yedges = np.histogram2d(x, y, (xedges, yedges))
+    xidx = np.clip(np.digitize(x, xedges) - 1, 0, hist.shape[0] - 1)
+    yidx = np.clip(np.digitize(y, yedges) - 1, 0, hist.shape[1] - 1)
+    return np.log(hist[xidx, yidx])
+
+
+def butter_lowpass_filtfilt(data, cutoff=1500, fs=50000, order=5):
+    # https://stackoverflow.com/questions/28536191/how-to-filter-smooth-with-scipy-numpy
+    def butter_lowpass(cutoff, fs, order):
+        nyq = 0.5 * fs
+        normal_cutoff = cutoff / nyq
+        return butter(order, normal_cutoff, btype='low', analog=False)
+
+    b, a = butter_lowpass(cutoff, fs, order=order)
+    return filtfilt(b, a, data)  # forward-backward filter
+
+
+def plot_one_box(x, img,point_list,point_list2,color=None, label=None, line_thickness=3):
+    # Plots one bounding box on image img
+    tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+    color = color or [random.randint(0, 255) for _ in range(3)]
+    c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+    cx = int((int(x[0])+int(x[2]))/2)
+    cy = int((int(x[1])+int(x[3]))/2)
+    x_bot = c1[0]
+    y_top = c2[1]
+    width = abs(x[2]-x[0])
+    height = abs(x[3]-x[1])
+    cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
     
-    distance_threshold = 25
-    result_dir = 'Results/'
-    ground_truth_dir = 'Videos/gt_PETS09-S2L1-raw.txt'
-    gt_file = open(ground_truth_dir, 'r')
-    gt_id_match = None
-    Lines_gt = gt_file.readlines()    
-    count_gt = 0
-    result_dir = open(result_dir+ "test" + str(distance_threshold) + ".txt", "a") 
-    result_dir.truncate(0) 
-    number_lines = len(Lines_gt)
-    
-
-    # Initialize
-    set_logging()
-    device = select_device(opt.device)
-    half = device.type != 'cpu'  # half precision only supported on CUDA
-
-    # Load model
-    model = attempt_load(weights, map_location=device)  # load FP32 model
-    stride = int(model.stride.max())  # model stride
-    imgsz = check_img_size(imgsz, s=stride)  # check img_size
-
-    if trace:
-        model = TracedModel(model, device, opt.img_size)
-
-    if half:
-        model.half()  # to FP16
-
-    # Second-stage classifier
-    classify = False
-    if classify:
-        modelc = load_classifier(name='resnet101', n=2)  # initialize
-        modelc.load_state_dict(torch.load('weights/resnet101.pt', map_location=device)['model']).to(device).eval()
-
-    # Set Dataloader
-    vid_path, vid_writer = None, None
-    if webcam:
-        view_img = check_imshow()
-        cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, stride=stride)
-    else:
-        dataset = LoadImages(source, img_size=imgsz, stride=stride)
-
-    # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
-
-    # Run inference
-    if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-    old_img_w = old_img_h = imgsz
-    old_img_b = 1
-
-    t0 = time.time()
-    z = 0
-    global_people_id = {} # Store location and id of object
-    global_people_id_old = {}
-    counter = 0
-    global_count_gt = 0
-    ID_count = 0 
-    
-
-    #comparisson_list = [{}]
+    # Calculate threshold 
+    min_y_threshold = (min(point_list, key=lambda tup: tup[1]))[1]
+    max_y_threshold = (max(point_list, key=lambda tup: tup[1]))[1]
+    min_x_threshold = (min(point_list, key=lambda tup: tup[0]))[0]
+    max_x_threshold = (max(point_list, key=lambda tup: tup[0]))[0]
    
-    region = None
-    for path, img, im0s, vid_cap in dataset:
-        ### REMOVE AFTER TO CUT VIDEO SHORT 
-        # if z == 500:
-        #     break
-        
-        z += 1
-        ### REMOVE 
-       
-        img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
-        if img.ndimension() == 3:
-            img = img.unsqueeze(0)
 
-        # Warmup
-        if device.type != 'cpu' and (old_img_b != img.shape[0] or old_img_h != img.shape[2] or old_img_w != img.shape[3]):
-            old_img_b = img.shape[0]
-            old_img_h = img.shape[2]
-            old_img_w = img.shape[3]
-            for i in range(3):
-                model(img, augment=opt.augment)[0]
+    min_y1_threshold = (min(point_list2, key=lambda tup: tup[1]))[1]
+    max_y1_threshold = (max(point_list2, key=lambda tup: tup[1]))[1]
+    min_x1_threshold = (min(point_list2, key=lambda tup: tup[0]))[0]
+    max_x1_threshold = (max(point_list2, key=lambda tup: tup[0]))[0]
 
-        # Inference
-        t1 = time_synchronized()
-        with torch.no_grad():   # Calculating gradients would cause a GPU memory leak
-            pred = model(img, augment=opt.augment)[0]
-        t2 = time_synchronized()
+    if label:
+        # Calculate position of person
+        if (cx > min_x_threshold and cx < max_x_threshold) and (cy > min_y_threshold and cy < max_y_threshold):
+            cv2.circle(img, (cx,cy) , radius=10, color =[0,255,0], thickness=-1) #plot center of bounding box
+            inbound = True
+            region = "R1"
 
-        # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
-        t3 = time_synchronized()
+        elif (cx > min_x1_threshold and cx < max_x1_threshold) and (cy > min_y1_threshold and cy < max_y1_threshold):
+            cv2.circle(img, (cx,cy) , radius=10, color =[255,0,0], thickness=-1) #plot center of bounding box
+            inbound = True
+            region = "R2"
 
-        # Apply Classifier
-        if classify:
-            pred = apply_classifier(pred, modelc, img, im0s)
-
-        # Process detections
-        for i, det in enumerate(pred):  # detections per image            
-            if webcam:  # batch_size >= 1
-                p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
-            else:
-                p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
-
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # img.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-            if len(det):
-                # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-
-                # Draw vertical line
-                #width, height = im0.shape[:2]
-
-                # Draw 4 lines
-
-
-                height = im0.shape[0]
-                width = im0.shape[1]         
-                        
-                start_point = ((int(width/2)),0)
-                end_point = ((int(width/2)),height)
-                color = (0,255,0)
-                thickness = 2
-                ## Implement vertical line unccoment next time 
-                #cv2.line(im0, start_point, end_point, color, thickness)
-
-                # Created our desired region of interst for our vide 
-                # !!! Red dot in Plots file !!!
-
-                #  Create region 1
-                p1 = (425,600)
-                p2 = (225,950)
-                p3 = (1400,600)
-                p4 = (1500,950)
-                point_list = [p1,p2,p3,p4]               
-
-                # Create region 2
-                color_2 = (255,0,0)
-                p1_2 = (425,600)
-                p2_2 = (1400,600)
-                p3_2 = (1350,400)
-                p4_2 = (525,400)
-                point_list_2 = [p1_2,p2_2,p3_2,p4_2]
-                
-                
-                if Training != True:
-                    cv2.line(im0, p1,p2, color, thickness)
-                    cv2.line(im0, p1,p3, color, thickness)
-                    cv2.line(im0, p3, p4, color, thickness)
-                    cv2.line(im0, p4,p2 , color, thickness)
-                    cv2.line(im0, p1_2,p2_2, color_2, thickness)
-                    cv2.line(im0, p2_2,p3_2, color_2, thickness)
-                    cv2.line(im0, p3_2, p4_2, color_2, thickness)
-                    cv2.line(im0, p4_2,p1_2 , color_2, thickness)
-                
-
-                # Print results    
-                for c in det[:, -1].unique():                  
-                    n = (det[:, -1] == c).sum()  # detections per class                    
-                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
-
-                # Write results
-                people_tracker = {}
-                min_distance = float('inf')
-                max_distance = 0
-                person_id = 0
-                found_new_value = False
-                for *xyxy, conf, cls in reversed(det):                    
-                    if save_txt:  # Write to file
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        line = (cls, *xywh, conf) if opt.save_conf else (cls, *xywh)  # label format
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
-                    if save_img or view_img:  # Add bbox to image
-                        label = f'{names[int(cls)]} {conf:.2f}'                        
-                        cx, cy, inbound, region, x_bot, y_top, width, height =  plot_one_box(xyxy, im0, point_list,point_list_2, label=label, color=colors[int(cls)], line_thickness=1) 
-
-                        if Training == True:
-                            bb_area = float(width) * float(height)
-                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height, bb_area,gt_id_match]                            
-                            person_id += 1
-                        elif inbound == True:
-                            bb_area = float(width) * float(height)
-                            people_tracker[('person' + str(person_id))] = [(cx,cy),region,x_bot, y_top, width, height, bb_area,gt_id_match]                            
-                            person_id += 1
-                            
-                            
-                
-                if len(global_people_id) == 0:       
-                    global_people_id = people_tracker   
-                    ID_count += len(global_people_id)
-
-                elif len(people_tracker) < len(global_people_id):
-                    k2_match = [] #Track people we considered closest points
-                    for k,v in people_tracker.items():                         
-                        for k2,v2 in global_people_id.items():
-                            if k2 in k2_match:
-                                continue                       
-                            # Calculate the distance between each tracked person and find closest match   
-                            distance_x = abs((v[0][0] - v2[0][0])**2)
-                            distance_y = abs((v[0][1]-v2[0][1])**2)
-                            distance = math.sqrt(distance_x+distance_y)                  
-                
-                            if distance < min_distance:
-                                min_distance = distance 
-                                min_distance_xy = v2
-                                smallest_k2 = k2
-                            if distance > max_distance:
-                                max_distance = distance
-                                max_distance_xy = v2
-                                biggest_k2 = k2                       
-                
-                        k2_match.append(smallest_k2)                     
-                        global_people_id[smallest_k2] = min_distance_xy                    
-                        min_distance = float('inf') # Reset minimum distance  
-
-                    k_remove = []
-                    for k,v in global_people_id.items():
-                        if k not in k2_match:
-                            k_remove.append(k)
-
-                    for item in k_remove:
-                        global_people_id.pop(item)                   
-                                  
-                else:
-
-
-                    k2_match = [] #Track people we considered closest points
-                    for k,v in global_people_id.items():                         
-                        for k2,v2 in people_tracker.items():
-                            if k2 in k2_match:
-                                continue                       
-                            # Calculate the distance between each tracked person and find closest match   
-                            distance_x = abs((v[0][0] - v2[0][0])**2)
-                            distance_y = abs((v[0][1]-v2[0][1])**2)
-                            distance = math.sqrt(distance_x+distance_y)                  
-                        
-                            if distance < min_distance:
-                                min_distance = distance 
-                                min_distance_xy = v2
-                                smallest_k2 = k2
-                            if distance > max_distance:
-                                max_distance = distance
-                                max_distance_xy = v2
-                                biggest_k2 = k2
-
-                        
-                                
-                        k2_match.append(smallest_k2)                     
-                        global_people_id[k] = min_distance_xy                    
-                        min_distance = float('inf') # Reset minimum distance                  
-                                
-                    if len(people_tracker) > len(global_people_id):
-                        for k,v in people_tracker.items():
-                            if k not in k2_match:                                                                                
-                                new_person_distance = v                            
-                                found_new_value = True
-                                
-                    if found_new_value == True:
-                        found_new_value = False
-                        ID_count += 1
-                        person_name = str('person'+str(ID_count))    
-                        global_people_id[person_name] = new_person_distance      
-
-            if len(global_people_id) != 0 and len(global_people_id_old) != 0 and z > 1 and len(global_people_id) == len(global_people_id_old):   
-                for k,v in global_people_id.items():     
-                    distance_x = abs(global_people_id[k][0][0] - global_people_id_old[k][0][0])
-                    distance_y = abs(global_people_id[k][0][1] - global_people_id_old[k][0][1])
-                    total_distance = distance_x + distance_y
-
-                    if global_people_id[k][1] != global_people_id_old[k][1]:   
-    
-                        if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1" and total_distance < distance_threshold:
-                            counter += 1
-                        else:
-                            counter -= 1
-                    
-            cv2.putText(im0, str(counter), (100,200), cv2.FONT_HERSHEY_DUPLEX, 5.0, (0, 255, 255), 10)
-
-            # Print time (inference + NMS)
-            #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
-
-            # Stream results
-            if view_img:
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
-
-            # Save results (image with detections)
-            if save_img:
-                if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
-                    print(f" The image with the result is saved in: {save_path}")
-                else:  # 'video' or 'stream'
-                    if vid_path != save_path:  # new video
-                        vid_path = save_path
-                        if isinstance(vid_writer, cv2.VideoWriter):
-                            vid_writer.release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                            save_path += '.mp4'
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer.write(im0)
-
-        
-        global_people_id_old = global_people_id.copy()
-
-       
-        # Compare information to groundtruth 
-        max_IoU = 0 # Initalize minimum IoU
-        add_line = global_count_gt
-       
-
-        for k,v in global_people_id.items():
-            
-            v[3] = float(v[3]/1.33)
-            # Define Bottom Left and Top right of Bounding box 
-            
-            A = ((v[2]),(v[3] - v[5])) # (X,Y coordinates bottom left)  Bounding box --> (X, Ytop - Height) 
-            B = ((v[2] + v[4]),(v[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
-            count_gt = 0
-
-            if Training == True:
-            # frame id xbottom ytop width height
-                #if gt_id_match == None:
-                    
-            
-                # Reads info for groundtruth            
-                diffent_frame = True
-                
-                for i in range(number_lines):
-                      
-                    line = Lines_gt[(i)]
-                    if line.split(',')[0] == str(z):
-                        
-                        # Define bottom left and top right corners of GT                    
-                        # Ground Truth
-                        global_count_gt += 1
-                        C = ((float(line.split(',')[2])),float(line.split(',')[3]) - float(line.split(',')[5])) # (X,Y coordinates bottom left) --> (X, Ytop - Height) 
-                        D = (float(line.split(',')[2]) + float(line.split(',')[4]), float(line.split(',')[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
-
-                        # Calculate Area of Intersection 
-                        x, y = 0, 1
-                        width = min(B[0], D[0]) - max(A[0], C[0])
-                        height = min(B[1], D[1]) - max(A[y], C[y])
-                    
-                        if min(width, height) > 0:
-                            AUI = width*height
-                        else:
-                            AUI = 0
-                        
-                        # Calculate AOU
-                        area1 = (B[x]-A[x]) * (B[y]-A[y])
-                        area2 = (D[x]-C[x]) * (D[y]-C[y])
-                        intersect = AUI
-                        Overlap = area1 + area2 - intersect
-
-                        # Calculate IoU
-                        if intersect != 0:
-                            IoU = Overlap/intersect
-                        else:
-                            IoU = 0
-                        # Update minimum IoU
-                        if IoU > max_IoU:                                
-                            max_IoU = IoU                            
-                            Id_match = line.split(',')[1] # Assign ID  
-                            
-                     
-                          
-                        count_gt += 1
-                        
-                    else:
-                        diffent_frame = False
-                        Inner_loop = False
-                        max_IoU = 0 
-                                        
-                        
-            global_count_gt = global_count_gt + global_count_gt/len(global_people_id)        
-            result_dir.write(f"{z} {Id_match} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
-
-    if save_txt or save_img:
-        s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        #print(f"Results saved to {save_dir}{s}")
-
-    print(f'Done. ({time.time() - t0:.3f}s)')
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='yolov7.pt', help='model.pt path(s)')
-    parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--view-img', action='store_true', help='display results')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
-    parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    parser.add_argument('--nosave', action='store_true', help='do not save images/videos')
-    parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --class 0, or --class 0 2 3')
-    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
-    parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument('--update', action='store_true', help='update all models')
-    parser.add_argument('--project', default='runs/detect', help='save results to project/name')
-    parser.add_argument('--name', default='exp', help='save results to project/name')
-    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
-    opt = parser.parse_args()
-    print(opt)
-    #check_requirements(exclude=('pycocotools', 'thop'))
-
-    with torch.no_grad():
-        if opt.update:  # update all models (to fix SourceChangeWarning)
-            for opt.weights in ['yolov7.pt']:
-                detect()
-                strip_optimizer(opt.weights)
         else:
-            detect()
+            cv2.circle(img, (cx,cy) , radius=10, color =[0,0,255], thickness=-1) #plot center of bounding box
+            region = None
+            inbound = False
+       
+
+        tf = max(tl - 1, 1)  # font thickness
+        t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+        c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+        cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+        cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+        
+        
+    return cx, cy, inbound, region, x_bot, y_top, width, height
+
+
+def plot_one_box_PIL(box, img, color=None, label=None, line_thickness=None):
+    img = Image.fromarray(img)
+    draw = ImageDraw.Draw(img)
+    line_thickness = line_thickness or max(int(min(img.size) / 200), 2)
+    draw.rectangle(box, width=line_thickness, outline=tuple(color))  # plot
+    if label:
+        fontsize = max(round(max(img.size) / 40), 12)
+        font = ImageFont.truetype("Arial.ttf", fontsize)
+        txt_width, txt_height = font.getsize(label)
+        draw.rectangle([box[0], box[1] - txt_height + 4, box[0] + txt_width, box[1]], fill=tuple(color))
+        draw.text((box[0], box[1] - txt_height + 1), label, fill=(255, 255, 255), font=font)
+    return np.asarray(img)
+
+
+def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
+    # Compares the two methods for width-height anchor multiplication
+    # https://github.com/ultralytics/yolov3/issues/168
+    x = np.arange(-4.0, 4.0, .1)
+    ya = np.exp(x)
+    yb = torch.sigmoid(torch.from_numpy(x)).numpy() * 2
+
+    fig = plt.figure(figsize=(6, 3), tight_layout=True)
+    plt.plot(x, ya, '.-', label='YOLOv3')
+    plt.plot(x, yb ** 2, '.-', label='YOLOR ^2')
+    plt.plot(x, yb ** 1.6, '.-', label='YOLOR ^1.6')
+    plt.xlim(left=-4, right=4)
+    plt.ylim(bottom=0, top=6)
+    plt.xlabel('input')
+    plt.ylabel('output')
+    plt.grid()
+    plt.legend()
+    fig.savefig('comparison.png', dpi=200)
+
+
+def output_to_target(output):
+    # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
+    targets = []
+    for i, o in enumerate(output):
+        for *box, conf, cls in o.cpu().numpy():
+            targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
+    return np.array(targets)
+
+
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+    # Plot image grid with labels
+
+    if isinstance(images, torch.Tensor):
+        images = images.cpu().float().numpy()
+    if isinstance(targets, torch.Tensor):
+        targets = targets.cpu().numpy()
+
+    # un-normalise
+    if np.max(images[0]) <= 1:
+        images *= 255
+
+    tl = 3  # line thickness
+    tf = max(tl - 1, 1)  # font thickness
+    bs, _, h, w = images.shape  # batch size, _, height, width
+    bs = min(bs, max_subplots)  # limit plot images
+    ns = np.ceil(bs ** 0.5)  # number of subplots (square)
+
+    # Check if we should resize
+    scale_factor = max_size / max(h, w)
+    if scale_factor < 1:
+        h = math.ceil(scale_factor * h)
+        w = math.ceil(scale_factor * w)
+
+    colors = color_list()  # list of colors
+    mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
+    for i, img in enumerate(images):
+        if i == max_subplots:  # if last batch has fewer images than we expect
+            break
+
+        block_x = int(w * (i // ns))
+        block_y = int(h * (i % ns))
+
+        img = img.transpose(1, 2, 0)
+        if scale_factor < 1:
+            img = cv2.resize(img, (w, h))
+
+        mosaic[block_y:block_y + h, block_x:block_x + w, :] = img
+        if len(targets) > 0:
+            image_targets = targets[targets[:, 0] == i]
+            boxes = xywh2xyxy(image_targets[:, 2:6]).T
+            classes = image_targets[:, 1].astype('int')
+            labels = image_targets.shape[1] == 6  # labels if no conf column
+            conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
+
+            if boxes.shape[1]:
+                if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
+                    boxes[[0, 2]] *= w  # scale to pixels
+                    boxes[[1, 3]] *= h
+                elif scale_factor < 1:  # absolute coords need scale if image scales
+                    boxes *= scale_factor
+            boxes[[0, 2]] += block_x
+            boxes[[1, 3]] += block_y
+            for j, box in enumerate(boxes.T):
+                cls = int(classes[j])
+                color = colors[cls % len(colors)]
+                cls = names[cls] if names else cls
+                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
+                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+
+        # Draw image filename labels
+        if paths:
+            label = Path(paths[i]).name[:40]  # trim to 40 char
+            t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+            cv2.putText(mosaic, label, (block_x + 5, block_y + t_size[1] + 5), 0, tl / 3, [220, 220, 220], thickness=tf,
+                        lineType=cv2.LINE_AA)
+
+        # Image border
+        cv2.rectangle(mosaic, (block_x, block_y), (block_x + w, block_y + h), (255, 255, 255), thickness=3)
+
+    if fname:
+        r = min(1280. / max(h, w) / ns, 1.0)  # ratio to limit image size
+        mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
+        # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
+        Image.fromarray(mosaic).save(fname)  # PIL save
+    return mosaic
+
+
+def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
+    # Plot LR simulating training for full epochs
+    optimizer, scheduler = copy(optimizer), copy(scheduler)  # do not modify originals
+    y = []
+    for _ in range(epochs):
+        scheduler.step()
+        y.append(optimizer.param_groups[0]['lr'])
+    plt.plot(y, '.-', label='LR')
+    plt.xlabel('epoch')
+    plt.ylabel('LR')
+    plt.grid()
+    plt.xlim(0, epochs)
+    plt.ylim(0)
+    plt.savefig(Path(save_dir) / 'LR.png', dpi=200)
+    plt.close()
+
+
+def plot_test_txt():  # from utils.plots import *; plot_test()
+    # Plot test.txt histograms
+    x = np.loadtxt('test.txt', dtype=np.float32)
+    box = xyxy2xywh(x[:, :4])
+    cx, cy = box[:, 0], box[:, 1]
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), tight_layout=True)
+    ax.hist2d(cx, cy, bins=600, cmax=10, cmin=0)
+    ax.set_aspect('equal')
+    plt.savefig('hist2d.png', dpi=300)
+
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6), tight_layout=True)
+    ax[0].hist(cx, bins=600)
+    ax[1].hist(cy, bins=600)
+    plt.savefig('hist1d.png', dpi=200)
+
+
+def plot_targets_txt():  # from utils.plots import *; plot_targets_txt()
+    # Plot targets.txt histograms
+    x = np.loadtxt('targets.txt', dtype=np.float32).T
+    s = ['x targets', 'y targets', 'width targets', 'height targets']
+    fig, ax = plt.subplots(2, 2, figsize=(8, 8), tight_layout=True)
+    ax = ax.ravel()
+    for i in range(4):
+        ax[i].hist(x[i], bins=100, label='%.3g +/- %.3g' % (x[i].mean(), x[i].std()))
+        ax[i].legend()
+        ax[i].set_title(s[i])
+    plt.savefig('targets.jpg', dpi=200)
+
+
+def plot_study_txt(path='', x=None):  # from utils.plots import *; plot_study_txt()
+    # Plot study.txt generated by test.py
+    fig, ax = plt.subplots(2, 4, figsize=(10, 6), tight_layout=True)
+    # ax = ax.ravel()
+
+    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 4), tight_layout=True)
+    # for f in [Path(path) / f'study_coco_{x}.txt' for x in ['yolor-p6', 'yolor-w6', 'yolor-e6', 'yolor-d6']]:
+    for f in sorted(Path(path).glob('study*.txt')):
+        y = np.loadtxt(f, dtype=np.float32, usecols=[0, 1, 2, 3, 7, 8, 9], ndmin=2).T
+        x = np.arange(y.shape[1]) if x is None else np.array(x)
+        s = ['P', 'R', 'mAP@.5', 'mAP@.5:.95', 't_inference (ms/img)', 't_NMS (ms/img)', 't_total (ms/img)']
+        # for i in range(7):
+        #     ax[i].plot(x, y[i], '.-', linewidth=2, markersize=8)
+        #     ax[i].set_title(s[i])
+
+        j = y[3].argmax() + 1
+        ax2.plot(y[6, 1:j], y[3, 1:j] * 1E2, '.-', linewidth=2, markersize=8,
+                 label=f.stem.replace('study_coco_', '').replace('yolo', 'YOLO'))
+
+    ax2.plot(1E3 / np.array([209, 140, 97, 58, 35, 18]), [34.6, 40.5, 43.0, 47.5, 49.7, 51.5],
+             'k.-', linewidth=2, markersize=8, alpha=.25, label='EfficientDet')
+
+    ax2.grid(alpha=0.2)
+    ax2.set_yticks(np.arange(20, 60, 5))
+    ax2.set_xlim(0, 57)
+    ax2.set_ylim(30, 55)
+    ax2.set_xlabel('GPU Speed (ms/img)')
+    ax2.set_ylabel('COCO AP val')
+    ax2.legend(loc='lower right')
+    plt.savefig(str(Path(path).name) + '.png', dpi=300)
+
+
+def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
+    # plot dataset labels
+    print('Plotting labels... ')
+    c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
+    nc = int(c.max() + 1)  # number of classes
+    colors = color_list()
+    x = pd.DataFrame(b.transpose(), columns=['x', 'y', 'width', 'height'])
+
+    # seaborn correlogram
+    sns.pairplot(x, corner=True, diag_kind='auto', kind='hist', diag_kws=dict(bins=50), plot_kws=dict(pmax=0.9))
+    plt.savefig(save_dir / 'labels_correlogram.jpg', dpi=200)
+    plt.close()
+
+    # matplotlib labels
+    matplotlib.use('svg')  # faster
+    ax = plt.subplots(2, 2, figsize=(8, 8), tight_layout=True)[1].ravel()
+    ax[0].hist(c, bins=np.linspace(0, nc, nc + 1) - 0.5, rwidth=0.8)
+    ax[0].set_ylabel('instances')
+    if 0 < len(names) < 30:
+        ax[0].set_xticks(range(len(names)))
+        ax[0].set_xticklabels(names, rotation=90, fontsize=10)
+    else:
+        ax[0].set_xlabel('classes')
+    sns.histplot(x, x='x', y='y', ax=ax[2], bins=50, pmax=0.9)
+    sns.histplot(x, x='width', y='height', ax=ax[3], bins=50, pmax=0.9)
+
+    # rectangles
+    labels[:, 1:3] = 0.5  # center
+    labels[:, 1:] = xywh2xyxy(labels[:, 1:]) * 2000
+    img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
+    for cls, *box in labels[:1000]:
+        ImageDraw.Draw(img).rectangle(box, width=1, outline=colors[int(cls) % 10])  # plot
+    ax[1].imshow(img)
+    ax[1].axis('off')
+
+    for a in [0, 1, 2, 3]:
+        for s in ['top', 'right', 'left', 'bottom']:
+            ax[a].spines[s].set_visible(False)
+
+    plt.savefig(save_dir / 'labels.jpg', dpi=200)
+    matplotlib.use('Agg')
+    plt.close()
+
+    # loggers
+    for k, v in loggers.items() or {}:
+        if k == 'wandb' and v:
+            v.log({"Labels": [v.Image(str(x), caption=x.name) for x in save_dir.glob('*labels*.jpg')]}, commit=False)
+
+
+def plot_evolution(yaml_file='data/hyp.finetune.yaml'):  # from utils.plots import *; plot_evolution()
+    # Plot hyperparameter evolution results in evolve.txt
+    with open(yaml_file) as f:
+        hyp = yaml.load(f, Loader=yaml.SafeLoader)
+    x = np.loadtxt('evolve.txt', ndmin=2)
+    f = fitness(x)
+    # weights = (f - f.min()) ** 2  # for weighted results
+    plt.figure(figsize=(10, 12), tight_layout=True)
+    matplotlib.rc('font', **{'size': 8})
+    for i, (k, v) in enumerate(hyp.items()):
+        y = x[:, i + 7]
+        # mu = (y * weights).sum() / weights.sum()  # best weighted result
+        mu = y[f.argmax()]  # best single result
+        plt.subplot(6, 5, i + 1)
+        plt.scatter(y, f, c=hist2d(y, f, 20), cmap='viridis', alpha=.8, edgecolors='none')
+        plt.plot(mu, f.max(), 'k+', markersize=15)
+        plt.title('%s = %.3g' % (k, mu), fontdict={'size': 9})  # limit to 40 characters
+        if i % 5 != 0:
+            plt.yticks([])
+        print('%15s: %.3g' % (k, mu))
+    plt.savefig('evolve.png', dpi=200)
+    print('\nPlot saved as evolve.png')
+
+
+def profile_idetection(start=0, stop=0, labels=(), save_dir=''):
+    # Plot iDetection '*.txt' per-image logs. from utils.plots import *; profile_idetection()
+    ax = plt.subplots(2, 4, figsize=(12, 6), tight_layout=True)[1].ravel()
+    s = ['Images', 'Free Storage (GB)', 'RAM Usage (GB)', 'Battery', 'dt_raw (ms)', 'dt_smooth (ms)', 'real-world FPS']
+    files = list(Path(save_dir).glob('frames*.txt'))
+    for fi, f in enumerate(files):
+        try:
+            results = np.loadtxt(f, ndmin=2).T[:, 90:-30]  # clip first and last rows
+            n = results.shape[1]  # number of rows
+            x = np.arange(start, min(stop, n) if stop else n)
+            results = results[:, x]
+            t = (results[0] - results[0].min())  # set t0=0s
+            results[0] = x
+            for i, a in enumerate(ax):
+                if i < len(results):
+                    label = labels[fi] if len(labels) else f.stem.replace('frames_', '')
+                    a.plot(t, results[i], marker='.', label=label, linewidth=1, markersize=5)
+                    a.set_title(s[i])
+                    a.set_xlabel('time (s)')
+                    # if fi == len(files) - 1:
+                    #     a.set_ylim(bottom=0)
+                    for side in ['top', 'right']:
+                        a.spines[side].set_visible(False)
+                else:
+                    a.remove()
+        except Exception as e:
+            print('Warning: Plotting error for %s; %s' % (f, e))
+
+    ax[1].legend()
+    plt.savefig(Path(save_dir) / 'idetection_profile.png', dpi=200)
+
+
+def plot_results_overlay(start=0, stop=0):  # from utils.plots import *; plot_results_overlay()
+    # Plot training 'results*.txt', overlaying train and val losses
+    s = ['train', 'train', 'train', 'Precision', 'mAP@0.5', 'val', 'val', 'val', 'Recall', 'mAP@0.5:0.95']  # legends
+    t = ['Box', 'Objectness', 'Classification', 'P-R', 'mAP-F1']  # titles
+    for f in sorted(glob.glob('results*.txt') + glob.glob('../../Downloads/results*.txt')):
+        results = np.loadtxt(f, usecols=[2, 3, 4, 8, 9, 12, 13, 14, 10, 11], ndmin=2).T
+        n = results.shape[1]  # number of rows
+        x = range(start, min(stop, n) if stop else n)
+        fig, ax = plt.subplots(1, 5, figsize=(14, 3.5), tight_layout=True)
+        ax = ax.ravel()
+        for i in range(5):
+            for j in [i, i + 5]:
+                y = results[j, x]
+                ax[i].plot(x, y, marker='.', label=s[j])
+                # y_smooth = butter_lowpass_filtfilt(y)
+                # ax[i].plot(x, np.gradient(y_smooth), marker='.', label=s[j])
+
+            ax[i].set_title(t[i])
+            ax[i].legend()
+            ax[i].set_ylabel(f) if i == 0 else None  # add filename
+        fig.savefig(f.replace('.txt', '.png'), dpi=200)
+
+
+def plot_results(start=0, stop=0, bucket='', id=(), labels=(), save_dir=''):
+    # Plot training 'results*.txt'. from utils.plots import *; plot_results(save_dir='runs/train/exp')
+    fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
+    ax = ax.ravel()
+    s = ['Box', 'Objectness', 'Classification', 'Precision', 'Recall',
+         'val Box', 'val Objectness', 'val Classification', 'mAP@0.5', 'mAP@0.5:0.95']
+    if bucket:
+        # files = ['https://storage.googleapis.com/%s/results%g.txt' % (bucket, x) for x in id]
+        files = ['results%g.txt' % x for x in id]
+        c = ('gsutil cp ' + '%s ' * len(files) + '.') % tuple('gs://%s/results%g.txt' % (bucket, x) for x in id)
+        os.system(c)
+    else:
+        files = list(Path(save_dir).glob('results*.txt'))
+    assert len(files), 'No results.txt files found in %s, nothing to plot.' % os.path.abspath(save_dir)
+    for fi, f in enumerate(files):
+        try:
+            results = np.loadtxt(f, usecols=[2, 3, 4, 8, 9, 12, 13, 14, 10, 11], ndmin=2).T
+            n = results.shape[1]  # number of rows
+            x = range(start, min(stop, n) if stop else n)
+            for i in range(10):
+                y = results[i, x]
+                if i in [0, 1, 2, 5, 6, 7]:
+                    y[y == 0] = np.nan  # don't show zero loss values
+                    # y /= y[0]  # normalize
+                label = labels[fi] if len(labels) else f.stem
+                ax[i].plot(x, y, marker='.', label=label, linewidth=2, markersize=8)
+                ax[i].set_title(s[i])
+                # if i in [5, 6, 7]:  # share train and val loss y axes
+                #     ax[i].get_shared_y_axes().join(ax[i], ax[i - 5])
+        except Exception as e:
+            print('Warning: Plotting error for %s; %s' % (f, e))
+
+    ax[1].legend()
+    fig.savefig(Path(save_dir) / 'results.png', dpi=200)
+    
+    
+def output_to_keypoint(output):
+    # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
+    targets = []
+    for i, o in enumerate(output):
+        kpts = o[:,6:]
+        o = o[:,:6]
+        for index, (*box, conf, cls) in enumerate(o.detach().cpu().numpy()):
+            targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf, *list(kpts.detach().cpu().numpy()[index])])
+    return np.array(targets)
+
+
+def plot_skeleton_kpts(im, kpts, steps, orig_shape=None):
+    #Plot the skeleton and keypointsfor coco datatset
+    palette = np.array([[255, 128, 0], [255, 153, 51], [255, 178, 102],
+                        [230, 230, 0], [255, 153, 255], [153, 204, 255],
+                        [255, 102, 255], [255, 51, 255], [102, 178, 255],
+                        [51, 153, 255], [255, 153, 153], [255, 102, 102],
+                        [255, 51, 51], [153, 255, 153], [102, 255, 102],
+                        [51, 255, 51], [0, 255, 0], [0, 0, 255], [255, 0, 0],
+                        [255, 255, 255]])
+
+    skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12],
+                [7, 13], [6, 7], [6, 8], [7, 9], [8, 10], [9, 11], [2, 3],
+                [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]
+
+    pose_limb_color = palette[[9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]]
+    pose_kpt_color = palette[[16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9]]
+    radius = 5
+    num_kpts = len(kpts) // steps
+
+    for kid in range(num_kpts):
+        r, g, b = pose_kpt_color[kid]
+        x_coord, y_coord = kpts[steps * kid], kpts[steps * kid + 1]
+        if not (x_coord % 640 == 0 or y_coord % 640 == 0):
+            if steps == 3:
+                conf = kpts[steps * kid + 2]
+                if conf < 0.5:
+                    continue
+            cv2.circle(im, (int(x_coord), int(y_coord)), radius, (int(r), int(g), int(b)), -1)
+
+    for sk_id, sk in enumerate(skeleton):
+        r, g, b = pose_limb_color[sk_id]
+        pos1 = (int(kpts[(sk[0]-1)*steps]), int(kpts[(sk[0]-1)*steps+1]))
+        pos2 = (int(kpts[(sk[1]-1)*steps]), int(kpts[(sk[1]-1)*steps+1]))
+        if steps == 3:
+            conf1 = kpts[(sk[0]-1)*steps+2]
+            conf2 = kpts[(sk[1]-1)*steps+2]
+            if conf1<0.5 or conf2<0.5:
+                continue
+        if pos1[0]%640 == 0 or pos1[1]%640==0 or pos1[0]<0 or pos1[1]<0:
+            continue
+        if pos2[0] % 640 == 0 or pos2[1] % 640 == 0 or pos2[0]<0 or pos2[1]<0:
+            continue
+        cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=2)
