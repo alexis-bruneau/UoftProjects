@@ -29,12 +29,14 @@ def detect(save_img=False,Training=True
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
     
-    distance_threshold = 25
+    distance_threshold = 50
     result_dir = 'Results/'
     ground_truth_dir = 'Videos/gt_PETS09-S2L1-raw.txt'
     gt_file = open(ground_truth_dir, 'r')
+    #gt_lines = gt_file.readlines() 
     gt_id_match = None
-    Lines_gt = gt_file.readlines()    
+    Lines_gt = gt_file.readlines()  
+    gt_rows = len(Lines_gt)  
     count_gt = 0
     result_dir = open(result_dir+ "test" + str(distance_threshold) + ".txt", "a") 
     result_dir.truncate(0) 
@@ -86,7 +88,7 @@ def detect(save_img=False,Training=True
     z = 0
     global_people_id = {} # Store location and id of object
     global_people_id_old = {}
-    counter = 0
+    counter = 0    
     global_count_gt = 0
     ID_count = 0 
     
@@ -96,11 +98,25 @@ def detect(save_img=False,Training=True
     region = None
     for path, img, im0s, vid_cap in dataset:
         ### REMOVE AFTER TO CUT VIDEO SHORT 
-        # if z == 500:
-        #     break
+        if z == 200:
+            break
         
         z += 1
         ### REMOVE 
+
+        ### Count how many detection is there in the ground truth (only for training)
+        
+        if Training == True:
+            gt_id_count = 0
+            for gt_index in range(gt_rows):
+                line_gt = Lines_gt[(gt_index)] # Ground truth line
+                
+                frame_gt = line_gt.split(',')[0] # Ground truth frame
+                if frame_gt == str(z):
+                    gt_id_count +=1
+        
+
+
        
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -131,7 +147,8 @@ def detect(save_img=False,Training=True
             pred = apply_classifier(pred, modelc, img, im0s)
 
         # Process detections
-        for i, det in enumerate(pred):  # detections per image            
+        last_item_counter = 0
+        for i, det in enumerate(pred):  # detections per image               
             if webcam:  # batch_size >= 1
                 p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
             else:
@@ -414,10 +431,25 @@ def detect(save_img=False,Training=True
                         diffent_frame = False
                         Inner_loop = False
                         max_IoU = 0 
-                                        
-                        
-            global_count_gt = global_count_gt + global_count_gt/len(global_people_id)        
-            result_dir.write(f"{z} {Id_match} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+                
+                last_item_counter +=1
+
+            global_count_gt = global_count_gt + global_count_gt/len(global_people_id)    
+
+
+            overestimate_count = len(global_people_id) - gt_id_count
+            # More count in ground truth           
+            print(f"First condition {len(global_people_id) > gt_id_count}")
+            print(f"Second condition {(last_item_counter >= (len(global_people_id) - overestimate_count))}, last item count {last_item_counter}, needs to be bigger than {len(global_people_id)}  - {overestimate_count}")
+            if len(global_people_id) > gt_id_count and (last_item_counter > (len(global_people_id) - overestimate_count)):
+                result_dir.write(f"{z} Overestimate {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+
+            else:            
+                result_dir.write(f"{z} {Id_match} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+
+           
+                
+            
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''

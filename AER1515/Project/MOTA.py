@@ -85,7 +85,6 @@ def MOTA(distance_threshold):
         Count_FP = len(index_match_rst)
         return Count_FP
 
-
     #FN()
     num_fp = FP()
     print(num_fp)
