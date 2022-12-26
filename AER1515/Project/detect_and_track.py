@@ -18,8 +18,7 @@ from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 
-def detect(save_img=False,Training=True
-):
+def detect(save_img=False,Training=False):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
     save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
     webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
@@ -41,7 +40,7 @@ def detect(save_img=False,Training=True
     result_dir = open(result_dir+ "test" + str(distance_threshold) + ".txt", "a") 
     result_dir.truncate(0) 
     number_lines = len(Lines_gt)
-    
+
 
     # Initialize
     set_logging()
@@ -92,13 +91,10 @@ def detect(save_img=False,Training=True
     global_count_gt = 0
     ID_count = 0 
     
-
-    #comparisson_list = [{}]
-   
     region = None
     for path, img, im0s, vid_cap in dataset:
         ### REMOVE AFTER TO CUT VIDEO SHORT 
-        if z == 200:
+        if z == 250:           
             break
         
         z += 1
@@ -115,9 +111,6 @@ def detect(save_img=False,Training=True
                 if frame_gt == str(z):
                     gt_id_count +=1
         
-
-
-       
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -166,18 +159,11 @@ def detect(save_img=False,Training=True
                 #width, height = im0.shape[:2]
 
                 # Draw 4 lines
-
-
                 height = im0.shape[0]
                 width = im0.shape[1]         
-                        
-                start_point = ((int(width/2)),0)
-                end_point = ((int(width/2)),height)
                 color = (0,255,0)
                 thickness = 2
-                ## Implement vertical line unccoment next time 
-                #cv2.line(im0, start_point, end_point, color, thickness)
-
+            
                 # Created our desired region of interst for our vide 
                 # !!! Red dot in Plots file !!!
 
@@ -197,7 +183,7 @@ def detect(save_img=False,Training=True
                 point_list_2 = [p1_2,p2_2,p3_2,p4_2]
                 
                 
-                if Training != True:
+                if Training != True:                  
                     cv2.line(im0, p1,p2, color, thickness)
                     cv2.line(im0, p1,p3, color, thickness)
                     cv2.line(im0, p3, p4, color, thickness)
@@ -208,7 +194,7 @@ def detect(save_img=False,Training=True
                     cv2.line(im0, p4_2,p1_2 , color_2, thickness)
                 
 
-                # Print results    
+                #Print results    1
                 for c in det[:, -1].unique():                  
                     n = (det[:, -1] == c).sum()  # detections per class                    
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
@@ -240,11 +226,12 @@ def detect(save_img=False,Training=True
                             person_id += 1
                             
                             
-                
+                # Case 0 from documentation
                 if len(global_people_id) == 0:       
                     global_people_id = people_tracker   
                     ID_count += len(global_people_id)
 
+                # Case 3 from documentation
                 elif len(people_tracker) < len(global_people_id):
                     k2_match = [] #Track people we considered closest points
                     for k,v in people_tracker.items():                         
@@ -262,9 +249,8 @@ def detect(save_img=False,Training=True
                                 smallest_k2 = k2
                             if distance > max_distance:
                                 max_distance = distance
-                                max_distance_xy = v2
-                                biggest_k2 = k2                       
-                
+                                              
+                        # Case 2 from documentation
                         k2_match.append(smallest_k2)                     
                         global_people_id[smallest_k2] = min_distance_xy                    
                         min_distance = float('inf') # Reset minimum distance  
@@ -279,7 +265,7 @@ def detect(save_img=False,Training=True
                                   
                 else:
 
-
+                    # Case 2 from documentation
                     k2_match = [] #Track people we considered closest points
                     for k,v in global_people_id.items():                         
                         for k2,v2 in people_tracker.items():
@@ -296,15 +282,12 @@ def detect(save_img=False,Training=True
                                 smallest_k2 = k2
                             if distance > max_distance:
                                 max_distance = distance
-                                max_distance_xy = v2
-                                biggest_k2 = k2
-
-                        
-                                
+                               
                         k2_match.append(smallest_k2)                     
                         global_people_id[k] = min_distance_xy                    
                         min_distance = float('inf') # Reset minimum distance                  
-                                
+
+                    # Case 4 from documentation            
                     if len(people_tracker) > len(global_people_id):
                         for k,v in people_tracker.items():
                             if k not in k2_match:                                                                                
@@ -317,23 +300,21 @@ def detect(save_img=False,Training=True
                         person_name = str('person'+str(ID_count))    
                         global_people_id[person_name] = new_person_distance      
 
-            if len(global_people_id) != 0 and len(global_people_id_old) != 0 and z > 1 and len(global_people_id) == len(global_people_id_old):   
-                for k,v in global_people_id.items():     
-                    distance_x = abs(global_people_id[k][0][0] - global_people_id_old[k][0][0])
-                    distance_y = abs(global_people_id[k][0][1] - global_people_id_old[k][0][1])
-                    total_distance = distance_x + distance_y
+            if Training == False:
+                if len(global_people_id) != 0 and len(global_people_id_old) != 0 and z > 1 and len(global_people_id) == len(global_people_id_old):   
+                    for k,v in global_people_id.items():     
+                        distance_x = abs(global_people_id[k][0][0] - global_people_id_old[k][0][0])
+                        distance_y = abs(global_people_id[k][0][1] - global_people_id_old[k][0][1])
+                        total_distance = distance_x + distance_y
 
-                    if global_people_id[k][1] != global_people_id_old[k][1]:   
-    
-                        if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1" and total_distance < distance_threshold:
-                            counter += 1
-                        else:
-                            counter -= 1
-                    
-            cv2.putText(im0, str(counter), (100,200), cv2.FONT_HERSHEY_DUPLEX, 5.0, (0, 255, 255), 10)
-
-            # Print time (inference + NMS)
-            #print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+                        if global_people_id[k][1] != global_people_id_old[k][1]:   
+        
+                            if global_people_id_old[k][1] == 'R2' and global_people_id[k][1] == "R1" and total_distance < distance_threshold:
+                                counter += 1
+                            else:
+                                counter -= 1
+                        
+                cv2.putText(im0, str(counter), (100,200), cv2.FONT_HERSHEY_DUPLEX, 5.0, (0, 255, 255), 10)
 
             # Stream results
             if view_img:
@@ -343,8 +324,7 @@ def detect(save_img=False,Training=True
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
-                    print(f" The image with the result is saved in: {save_path}")
+                    cv2.imwrite(save_path, im0)                    
                 else:  # 'video' or 'stream'
                     if vid_path != save_path:  # new video
                         vid_path = save_path
@@ -364,88 +344,83 @@ def detect(save_img=False,Training=True
         global_people_id_old = global_people_id.copy()
 
        
-        # Compare information to groundtruth 
-        max_IoU = 0 # Initalize minimum IoU
-        add_line = global_count_gt
+        # Compare information to groundtruth (greedy matching based on BB IoU)
+        # Code is not optimized (goes through each rows of txt in case the ground truth frames are not in order)
+        max_IoU = 0 # Initalize minimum IoU        
        
+        if Training == True: 
+            Assigned_gt_id = [] # Keep track of which gt ID was assigned as best match
+            for k,v in global_people_id.items():
 
-        for k,v in global_people_id.items():
-            
-            v[3] = float(v[3]/1.33)
-            # Define Bottom Left and Top right of Bounding box 
-            
-            A = ((v[2]),(v[3] - v[5])) # (X,Y coordinates bottom left)  Bounding box --> (X, Ytop - Height) 
-            B = ((v[2] + v[4]),(v[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
-            count_gt = 0
-
-            if Training == True:
-            # frame id xbottom ytop width height
-                #if gt_id_match == None:
-                    
-            
-                # Reads info for groundtruth            
-                diffent_frame = True
+                # We had an issue with the y location compared to the ground truth modify this value accordingly to video
+                v[3] = float(v[3]/1.4)
+                # Define Bottom Left and Top right of Bounding box 
                 
-                for i in range(number_lines):
-                      
-                    line = Lines_gt[(i)]
-                    if line.split(',')[0] == str(z):
-                        
-                        # Define bottom left and top right corners of GT                    
-                        # Ground Truth
-                        global_count_gt += 1
-                        C = ((float(line.split(',')[2])),float(line.split(',')[3]) - float(line.split(',')[5])) # (X,Y coordinates bottom left) --> (X, Ytop - Height) 
-                        D = (float(line.split(',')[2]) + float(line.split(',')[4]), float(line.split(',')[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
+                A = ((v[2]),(v[3] - v[5])) # (X,Y coordinates bottom left)  Bounding box --> (X, Ytop - Height) 
+                B = ((v[2] + v[4]),(v[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
+                count_gt = 0
+                max_IoU = 0 
 
-                        # Calculate Area of Intersection 
-                        x, y = 0, 1
-                        width = min(B[0], D[0]) - max(A[0], C[0])
-                        height = min(B[1], D[1]) - max(A[y], C[y])
-                    
-                        if min(width, height) > 0:
-                            AUI = width*height
-                        else:
-                            AUI = 0
+                if Training == True:
+                    for i in range(number_lines):
                         
-                        # Calculate AOU
-                        area1 = (B[x]-A[x]) * (B[y]-A[y])
-                        area2 = (D[x]-C[x]) * (D[y]-C[y])
-                        intersect = AUI
-                        Overlap = area1 + area2 - intersect
-
-                        # Calculate IoU
-                        if intersect != 0:
-                            IoU = Overlap/intersect
-                        else:
-                            IoU = 0
-                        # Update minimum IoU
-                        if IoU > max_IoU:                                
-                            max_IoU = IoU                            
-                            Id_match = line.split(',')[1] # Assign ID  
+                        line = Lines_gt[(i)]
+                        if line.split(',')[0] == str(z):
                             
-                     
-                          
-                        count_gt += 1
+                            # Define bottom left and top right corners of GT                    
+                            # Ground Truth
+                            global_count_gt += 1
+                            C = ((float(line.split(',')[2])),float(line.split(',')[3]) - float(line.split(',')[5])) # (X,Y coordinates bottom left) --> (X, Ytop - Height) 
+                            D = (float(line.split(',')[2]) + float(line.split(',')[4]), float(line.split(',')[3])) # (X,Y coordinates top right) Bounding Box --> (X_left + width, Y_top)
+
+                            # Calculate Area of Intersection 
+                            x, y = 0, 1
+                            width = min(B[0], D[0]) - max(A[0], C[0])
+                            height = min(B[1], D[1]) - max(A[y], C[y])
                         
-                    else:
-                        diffent_frame = False
-                        Inner_loop = False
-                        max_IoU = 0 
-                
-                last_item_counter +=1
+                            if min(width, height) > 0:
+                                AUI = width*height
+                            else:
+                                AUI = 0
+                            
+                            # Calculate AOU
+                            area1 = (B[x]-A[x]) * (B[y]-A[y])
+                            area2 = (D[x]-C[x]) * (D[y]-C[y])
+                            intersect = AUI
+                            Overlap = area1 + area2 - intersect
 
-            global_count_gt = global_count_gt + global_count_gt/len(global_people_id)    
+                            # Calculate IoU
+                            if intersect != 0:
+                                IoU = intersect/Overlap
+                            else:
+                                IoU = 0                               
+                        
+                            if IoU >= max_IoU:                              
+                            
+                                if line.split(',')[1] not in Assigned_gt_id:
+                                    
+                                    max_IoU = IoU                            
+                                    Id_match = line.split(',')[1] # Assign ID  
+                                      
+                            count_gt += 1
+                            
+                        else:
+                            max_IoU = 0 
+
+                    Assigned_gt_id.append(Id_match)
+                    
+                    last_item_counter +=1
+
+                global_count_gt = global_count_gt + global_count_gt/len(global_people_id)    
 
 
-            overestimate_count = len(global_people_id) - gt_id_count
-            # More count in ground truth           
-            print(f"First condition {len(global_people_id) > gt_id_count}")
-            print(f"Second condition {(last_item_counter >= (len(global_people_id) - overestimate_count))}, last item count {last_item_counter}, needs to be bigger than {len(global_people_id)}  - {overestimate_count}")
-            if len(global_people_id) > gt_id_count and (last_item_counter > (len(global_people_id) - overestimate_count)):
-                result_dir.write(f"{z} Overestimate {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+                overestimate_count = len(global_people_id) - gt_id_count
+                # More count in ground truth           
+                if len(global_people_id) > gt_id_count and (last_item_counter > (len(global_people_id) - overestimate_count)):
+                    result_dir.write(f"{z} Overestimate {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
 
-            else:            
-                result_dir.write(f"{z} {Id_match} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
+                else:            
+                    result_dir.write(f"{z} {Id_match} {k} {v[2]} {v[3]} {v[4]} {v[5]}\n")
 
            
                 
@@ -453,7 +428,7 @@ def detect(save_img=False,Training=True
 
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        #print(f"Results saved to {save_dir}{s}")
+       
 
     print(f'Done. ({time.time() - t0:.3f}s)')
 
