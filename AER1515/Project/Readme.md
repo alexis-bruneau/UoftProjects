@@ -48,11 +48,11 @@ When testing or training, you can uncomment line 97 and 98 to stop the script wh
 * Modify the y ratio on line 366 (Depending on the scale of the video, the y value might need to be scalled differently)
 * Run the following line:
  -- python detect_and_track.py --weights yolov7.pt --conf-thres  0.25 --iou-thres 0.45 --img-size 640 --source Videos\PETS09-S2L1-raw.mp4 --view-img --no-trace --classes 0
- -- Things to consider
-	--- The weights can be changed to different such as YOLOv7-E6E ...
-	--- Change the img-size accordingly
-	--- Switch to the correct Video name
-	--- The class can be changed to track different objects (ex 0 = person, 2 = car ...). Go in yolov7 -> data -> coco.yaml to see all 80 classes
+ * Things to consider
+	* The weights can be changed to different such as YOLOv7-E6E ...
+	* Change the img-size accordingly
+	* Switch to the correct Video name
+	* The class can be changed to track different objects (ex 0 = person, 2 = car ...). Go in yolov7 -> data -> coco.yaml to see all 80 classes
  
 * Go on the Metrics_Training python file to calculate the MOTA and MOTP score.
 	* Change the parameter in line 240 & 241. It represents the distance threshold that was tested
