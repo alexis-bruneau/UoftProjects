@@ -3,6 +3,8 @@
 
 The purpose of this project is to detect and track people using YOLOv7 to detect people and implement a tracking algorithm to count people going in and out of a store. MOTA and MOTP was used to tuned hyperparameters of the algorithm. The training videos and their ground truth came from the [MOT Challenge](https://motchallenge.net/). The testing video used was from a cctv video found [here](https://www.youtube.com/watch?v=-IvBKBx0UBo&ab_channel=HDSecurityStore). The algorithm is easily modifiable to track different objects and change the region of interest. 
 
+![Results-People_Counter](https://user-images.githubusercontent.com/106686997/209584702-16f70050-fbaf-42d7-89dd-c0b5d2f12df1.gif)
+
 ## Results 
 ====================
 
