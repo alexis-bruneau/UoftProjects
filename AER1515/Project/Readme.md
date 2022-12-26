@@ -6,12 +6,11 @@ The purpose of this project is to detect and track people using YOLOv7 to detect
 
 The algorithm is easily modifiable to track different objects and change the region of interest. Our parameters were tuned to obtain the best MOTA and MOTP results. We obtain a MOTA score of 94.3% and a MOTP score of 39.1%. One limitation of our method is that occlusion of the objects reduces the accuracy. We found that the best set up was to have a camera setup and point downward. Our methodology and results can be found in AER1515_report(People Counter Using Multiple Object Tracker).
 
-<p align="center">
 ![Results-People_Counter](https://user-images.githubusercontent.com/106686997/209584702-16f70050-fbaf-42d7-89dd-c0b5d2f12df1.gif)
-</p>
 
 
 ### Initial Setup \ Dependencies
+====================
 
 * Create a virtual environment
 * Clone YOLOv7 repository https://github.com/WongKinYiu/yolov7
