@@ -1,0 +1,11 @@
+pip install pandas
+pip install wordcloud
+pip install fuzzywuzzy
+pip install -U scikit-learn
+python -m pip install -U matplotlib
+pip install regex
+pip install seaborn
+pip install nltk
+pip install skillNer
+python -m spacy download en_core_web_lg
+pip install HTMLParser
