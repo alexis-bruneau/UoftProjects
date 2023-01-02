@@ -2,7 +2,7 @@
 
 ## Background
 
-The purpose of this project is to create a course curriculum for a new "Master of Business and Management in Data Science and Artifical Intelligence". The job description from interested jobs was scrapped from Indeed and then clustering algorithms was used to group/segment skills into courses. To extract skills, the NLP model [**SkillNeER**](https://github.com/AnasAito/SkillNER) was use to categorize the type of skills. The project consisted of the following five steps:
+The purpose of this project is to create a course curriculum for a new "Master of Business and Management in Data Science and Artifical Intelligence". The job description from interested jobs was scrapped from Indeed and then clustering algorithms was used to group/segment skills into courses. To extract skills, the NLP model [**SkillNER**](https://github.com/AnasAito/SkillNER) was use to categorize the type of skills. The project consisted of the following five steps:
 
 * Data collection and cleaning
 * EDA and Feature Engineering
