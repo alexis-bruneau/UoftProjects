@@ -1,4 +1,4 @@
-# People Counter Using Multiple Object Tracker
+# Assignment 3 
 
 ## Results 
 

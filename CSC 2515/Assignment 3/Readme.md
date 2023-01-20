@@ -13,6 +13,7 @@ The purpose of this assignmnet is to build classifiers to label images of handwr
 
 * Run Requirements.txt
 * When running the cell files.upload()
+
 	* a3digits.zip
 	* data.py
 
