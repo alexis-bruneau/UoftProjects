@@ -5,3 +5,4 @@ This folder contains the projects done at the university of Toronto. The project
 * CSC 2515 Introduction to Machine Learning
 * MIE 1075 AI Applications in Robotics
 * MIE 1624 Introduction to Data Science and Analytics
+* MIE 1517 Deep Learning
