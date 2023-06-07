@@ -2,7 +2,7 @@
 
 This project aims to build a multi-aspect automated essay scoring model using an ensemble of neural networks. The model takes essays as input and predicts scores for various writing aspects such as grammar, vocabulary, cohesion, and more.
 
-The following is a link to the presenetation made for this project: [Video](https://youtu.be/fNbPEZ__sWo)
+The following is a link to the presentation made for this project: [Video](https://youtu.be/fNbPEZ__sWo)
 
 
 ## Getting Started
